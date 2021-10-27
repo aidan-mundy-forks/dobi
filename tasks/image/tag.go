@@ -1,11 +1,11 @@
 package image
 
 import (
+	cont "context"
 	"fmt"
 
 	"github.com/dnephin/dobi/config"
 	"github.com/dnephin/dobi/tasks/context"
-	docker "github.com/fsouza/go-dockerclient"
 )
 
 // RunTag builds or pulls an image if it is out of date
@@ -26,12 +26,7 @@ func tagImage(ctx *context.ExecuteContext, config *config.ImageConfig, imageTag 
 		return nil
 	}
 
-	repo, tag := docker.ParseRepositoryTag(imageTag)
-	err := ctx.Client.TagImage(canonicalImageTag, docker.TagImageOptions{
-		Repo:  repo,
-		Tag:   tag,
-		Force: true,
-	})
+	err := ctx.Client.ImageTag(cont.Background(), canonicalImageTag, imageTag)
 	if err != nil {
 		return fmt.Errorf("failed to add tag %q: %s", imageTag, err)
 	}

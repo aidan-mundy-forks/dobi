@@ -4,11 +4,12 @@ import (
 	"fmt"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"time"
 
+	"github.com/distribution/distribution/reference"
 	"github.com/dnephin/configtf"
 	pth "github.com/dnephin/configtf/path"
-	docker "github.com/fsouza/go-dockerclient"
 	"github.com/pkg/errors"
 )
 
@@ -45,7 +46,7 @@ type ImageConfig struct {
 	// Args Build args used to build the image. Values in the mapping support
 	// :doc:`variables`.
 	// type: mapping ``key: value``
-	Args map[string]string
+	Args map[string]*string
 	// Target The target stage to build in a multi-stage Dockerfile. Defaults to
 	// the last stage.
 	Target string
@@ -123,25 +124,42 @@ func (c *ImageConfig) IsBuildable() bool {
 
 // ValidateImage validates the image field does not include a tag
 func (c *ImageConfig) ValidateImage() error {
-	_, tag := docker.ParseRepositoryTag(c.Image)
-	if tag != "" {
-		return errors.Errorf(
-			"tag %q must be specified in the `tags` field, not in `image`", tag)
+	if !Anchored(reference.ReferenceRegexp).MatchString(c.Image) {
+		return errors.New("the value provided for `image` does not appear to be a reference to a docker image")
 	}
+
+	if !Anchored(reference.NameRegexp).MatchString(c.Image) {
+		// Image does not match the "name" format
+		if Anchored(Capture(reference.NameRegexp),
+			Literal(":"), Capture(reference.TagRegexp),
+			Optional(Literal("@"), Capture(reference.DigestRegexp))).MatchString(c.Image) {
+			// Image is in the format "name:tag[@digest]"
+			return errors.New("tags must be specified in the `tags` field, not in `image`")
+		}
+		if Anchored(Capture(reference.NameRegexp),
+			Optional(Literal(":"), Capture(reference.TagRegexp)),
+			Literal("@"), Capture(reference.DigestRegexp)).MatchString(c.Image) {
+			// Image is in the format "name[:tag]@digest"
+			return errors.New("digests are not supported in the image name")
+		}
+		return errors.New("unknown error while processing the `image` field's format")
+	}
+
 	return nil
 }
 
 // ValidateTags to ensure the first tag is a basic tag without an image name.
 func (c *ImageConfig) ValidateTags() error {
-	if len(c.Tags) == 0 {
-		return nil
-	}
-	_, tag := docker.ParseRepositoryTag(c.Tags[0])
-	if tag != "" {
-		return errors.Errorf("the first tag %q may not include an image name", tag)
+	for n, tag := range c.Tags {
+		cleanTag := Expression(Literal("{"), Match(".*"), Literal("}")).ReplaceAllLiteralString(tag, "CONFIGVAR")
+		if n == 0 && !Anchored(reference.TagRegexp).MatchString(cleanTag) {
+			return errors.Errorf("the first tag, %q, may not include an image name", tag)
+		} else if !Anchored(Optional(reference.NameRegexp, Literal(":")), reference.TagRegexp).MatchString(cleanTag) {
+			// Provided tag does not meet "[name:]tag" format
+			return errors.Errorf("the tag %q is formatted incorrectly", tag)
+		}
 	}
 	return nil
-
 }
 
 func (c *ImageConfig) String() string {
@@ -174,7 +192,8 @@ func (c *ImageConfig) Resolve(resolver Resolver) (Resource, error) {
 	}
 
 	for key, value := range c.Args {
-		conf.Args[key], err = resolver.Resolve(value)
+		str, err := resolver.Resolve(*value)
+		conf.Args[key] = &str
 		if err != nil {
 			return &conf, err
 		}
@@ -261,4 +280,59 @@ func imageFromConfig(name string, values map[string]interface{}) (Resource, erro
 
 func init() {
 	RegisterResource("image", imageFromConfig)
+}
+
+// The following code was copied from github.com/distribution/distribution/reference/regexp.go
+// https://github.com/distribution/distribution/pull/3517
+
+var Match = regexp.MustCompile
+
+// Literal compiles s into a Literal regular expression, escaping any regexp
+// reserved characters.
+func Literal(s string) *regexp.Regexp {
+	re := Match(regexp.QuoteMeta(s))
+
+	if _, complete := re.LiteralPrefix(); !complete {
+		panic("must be a literal")
+	}
+
+	return re
+}
+
+// Expression defines a full Expression, where each regular Expression must
+// follow the previous.
+func Expression(res ...*regexp.Regexp) *regexp.Regexp {
+	var s string
+	for _, re := range res {
+		s += re.String()
+	}
+
+	return Match(s)
+}
+
+// Optional wraps the expression in a non-capturing group and makes the
+// production Optional.
+func Optional(res ...*regexp.Regexp) *regexp.Regexp {
+	return Match(Group(Expression(res...)).String() + `?`)
+}
+
+// Repeated wraps the regexp in a non-capturing group to get one or more
+// matches.
+func Repeated(res ...*regexp.Regexp) *regexp.Regexp {
+	return Match(Group(Expression(res...)).String() + `+`)
+}
+
+// Group wraps the regexp in a non-capturing Group.
+func Group(res ...*regexp.Regexp) *regexp.Regexp {
+	return Match(`(?:` + Expression(res...).String() + `)`)
+}
+
+// Capture wraps the expression in a capturing group.
+func Capture(res ...*regexp.Regexp) *regexp.Regexp {
+	return Match(`(` + Expression(res...).String() + `)`)
+}
+
+// Anchored anchors the regular expression by adding start and end delimiters.
+func Anchored(res ...*regexp.Regexp) *regexp.Regexp {
+	return Match(`^` + Expression(res...).String() + `$`)
 }

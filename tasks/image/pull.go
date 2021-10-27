@@ -1,12 +1,13 @@
 package image
 
 import (
+	cont "context"
 	"io"
 	"os"
 	"time"
 
 	"github.com/dnephin/dobi/tasks/context"
-	docker "github.com/fsouza/go-dockerclient"
+	docker_types "github.com/docker/docker/api/types"
 )
 
 // RunPull builds or pulls an image if it is out of date
@@ -47,15 +48,8 @@ func now() *time.Time {
 }
 
 func pullImage(ctx *context.ExecuteContext, t *Task, imageTag string) error {
-	registry := parseAuthRepo(t.config.Image)
-	repo, tag := docker.ParseRepositoryTag(imageTag)
 	return Stream(os.Stdout, func(out io.Writer) error {
-		return ctx.Client.PullImage(docker.PullImageOptions{
-			Repository:    repo,
-			Tag:           tag,
-			OutputStream:  out,
-			RawJSONStream: true,
-			// TODO: timeout
-		}, ctx.GetAuthConfig(registry))
+		_, err := ctx.Client.ImagePull(cont.Background(), imageTag, docker_types.ImagePullOptions{})
+		return err
 	})
 }

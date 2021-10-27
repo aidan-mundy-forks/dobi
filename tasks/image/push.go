@@ -1,11 +1,12 @@
 package image
 
 import (
+	cont "context"
 	"io"
 	"os"
 
 	"github.com/dnephin/dobi/tasks/context"
-	docker "github.com/fsouza/go-dockerclient"
+	docker_types "github.com/docker/docker/api/types"
 )
 
 // RunPush pushes an image to the registry
@@ -21,13 +22,8 @@ func RunPush(ctx *context.ExecuteContext, t *Task, _ bool) (bool, error) {
 }
 
 func pushImage(ctx *context.ExecuteContext, tag string) error {
-	repo := parseAuthRepo(tag)
 	return Stream(os.Stdout, func(out io.Writer) error {
-		return ctx.Client.PushImage(docker.PushImageOptions{
-			Name:          tag,
-			OutputStream:  out,
-			RawJSONStream: true,
-			// TODO: timeout
-		}, ctx.GetAuthConfig(repo))
+		_, err := ctx.Client.ImagePush(cont.Background(), tag, docker_types.ImagePushOptions{})
+		return err
 	})
 }

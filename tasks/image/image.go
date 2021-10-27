@@ -4,13 +4,13 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/distribution/distribution/reference"
 	"github.com/dnephin/dobi/config"
 	"github.com/dnephin/dobi/logging"
 	"github.com/dnephin/dobi/tasks/context"
 	"github.com/dnephin/dobi/tasks/task"
 	"github.com/dnephin/dobi/tasks/types"
-	docker "github.com/fsouza/go-dockerclient"
-	"github.com/moby/moby/pkg/jsonmessage"
+	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/moby/term"
 	log "github.com/sirupsen/logrus"
 )
@@ -79,7 +79,8 @@ func (t *Task) forEachProvidedTag(each func(string) error, tags []string) error 
 	for _, tag := range tags {
 		imageTag := tag
 		// Create complete image name if the tag does not already have it.
-		if _, hasTag := docker.ParseRepositoryTag(tag); hasTag == "" {
+		if !config.Anchored(reference.NameRegexp, config.Literal(":"), reference.TagRegexp).MatchString(tag) {
+			// Provided tag does not meet "name:tag" format
 			imageTag = t.config.Image + ":" + tag
 		}
 

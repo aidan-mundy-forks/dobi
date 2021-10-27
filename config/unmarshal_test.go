@@ -38,7 +38,8 @@ func TestLoadFromBytes(t *testing.T) {
 
 	config, err := LoadFromBytes([]byte(conf))
 	assert.NilError(t, err)
-
+	version := "3.3.3"
+	debug := "true"
 	expected := &Config{
 		Meta: &MetaConfig{
 			Default: "alias-def",
@@ -46,9 +47,9 @@ func TestLoadFromBytes(t *testing.T) {
 		Resources: map[string]Resource{
 			"image-def": &ImageConfig{
 				Dockerfile: "what",
-				Args: map[string]string{
-					"VERSION": "3.3.3",
-					"DEBUG":   "true",
+				Args: map[string]*string{
+					"VERSION": &version,
+					"DEBUG":   &debug,
 				},
 				Image: "imagename",
 			},

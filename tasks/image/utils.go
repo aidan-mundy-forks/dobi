@@ -1,13 +1,14 @@
 package image
 
 import (
+	cont "context"
 	"fmt"
 	"strings"
 
 	"github.com/dnephin/dobi/config"
 	"github.com/dnephin/dobi/logging"
 	"github.com/dnephin/dobi/tasks/context"
-	docker "github.com/fsouza/go-dockerclient"
+	docker_types "github.com/docker/docker/api/types"
 )
 
 const (
@@ -15,8 +16,9 @@ const (
 )
 
 // GetImage returns the image created by an image config
-func GetImage(ctx *context.ExecuteContext, conf *config.ImageConfig) (*docker.Image, error) {
-	return ctx.Client.InspectImage(GetImageName(ctx, conf))
+func GetImage(ctx *context.ExecuteContext, conf *config.ImageConfig) (docker_types.ImageInspect, error) {
+	image, _, err := ctx.Client.ImageInspectWithRaw(cont.Background(), GetImageName(ctx, conf))
+	return image, err
 }
 
 // GetImageName returns the image name for an image config

@@ -1,12 +1,12 @@
 package image
 
 import (
+	cont "context"
 	"testing"
 
 	"github.com/dnephin/dobi/config"
 	"github.com/dnephin/dobi/tasks/client"
 	"github.com/dnephin/dobi/tasks/context"
-	docker "github.com/fsouza/go-dockerclient"
 	"github.com/golang/mock/gomock"
 	"gotest.tools/v3/assert"
 )
@@ -44,11 +44,7 @@ func TestTagImageNothingToTag(t *testing.T) {
 func TestTagImageWithTag(t *testing.T) {
 	mockClient, teardown := setupMockClient(t)
 	defer teardown()
-	mockClient.EXPECT().TagImage("imagename:tag", docker.TagImageOptions{
-		Repo:  "imagename",
-		Tag:   "foo",
-		Force: true,
-	})
+	mockClient.EXPECT().ImageTag(cont.Background(), "imagename:tag", "imagename:foo")
 
 	ctx, config := setupCtxAndConfig(mockClient)
 	err := tagImage(ctx, config, "imagename:foo")
@@ -58,11 +54,7 @@ func TestTagImageWithTag(t *testing.T) {
 func TestTagImageWithFullImageName(t *testing.T) {
 	mockClient, teardown := setupMockClient(t)
 	defer teardown()
-	mockClient.EXPECT().TagImage("imagename:tag", docker.TagImageOptions{
-		Repo:  "othername",
-		Tag:   "bar",
-		Force: true,
-	})
+	mockClient.EXPECT().ImageTag(cont.Background(), "imagename:tag", "othername:bar")
 	ctx, config := setupCtxAndConfig(mockClient)
 	err := tagImage(ctx, config, "othername:bar")
 	assert.NilError(t, err)
@@ -71,11 +63,7 @@ func TestTagImageWithFullImageName(t *testing.T) {
 func TestTagImageWithFullImageNameAndHost(t *testing.T) {
 	mockClient, teardown := setupMockClient(t)
 	defer teardown()
-	mockClient.EXPECT().TagImage("imagename:tag", docker.TagImageOptions{
-		Repo:  "localhost:3030/othername",
-		Tag:   "bar",
-		Force: true,
-	})
+	mockClient.EXPECT().ImageTag(cont.Background(), "imagename:tag", "localhost:3030/othername:bar")
 	ctx, config := setupCtxAndConfig(mockClient)
 	err := tagImage(ctx, config, "localhost:3030/othername:bar")
 	assert.NilError(t, err)

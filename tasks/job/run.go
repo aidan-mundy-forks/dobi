@@ -2,9 +2,9 @@ package job
 
 import (
 	"bytes"
+	cont "context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"os/signal"
 	"strings"
@@ -20,9 +20,13 @@ import (
 	"github.com/dnephin/dobi/tasks/task"
 	"github.com/dnephin/dobi/tasks/types"
 	"github.com/dnephin/dobi/utils/fs"
+	docker_types "github.com/docker/docker/api/types"
+	docker_container "github.com/docker/docker/api/types/container"
+	docker_network "github.com/docker/docker/api/types/network"
+	docker_time "github.com/docker/docker/api/types/time"
 	"github.com/docker/go-connections/nat"
-	docker "github.com/fsouza/go-dockerclient"
 	"github.com/moby/term"
+	specs "github.com/opencontainers/image-spec/specs-go/v1"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -40,6 +44,14 @@ type Task struct {
 	name      task.Name
 	config    *config.JobConfig
 	outStream io.Writer
+}
+
+type containerCreateOptions struct {
+	*docker_container.Config
+	*docker_container.HostConfig
+	*docker_network.NetworkingConfig
+	*specs.Platform
+	Name string
 }
 
 // Name returns the name of the task
@@ -143,7 +155,16 @@ func (t *Task) isStale(ctx *context.ExecuteContext) (bool, error) {
 	if err != nil {
 		return true, fmt.Errorf("failed to get image %q: %s", imageName, err)
 	}
-	if artifactLastModified.Before(taskImage.Created) {
+	ts, err := docker_time.GetTimestamp(taskImage.Created, time.Now())
+	if err != nil {
+		return true, err
+	}
+	sec, nsec, err := docker_time.ParseTimestamps(ts, 0)
+	if err != nil {
+		return true, err
+	}
+
+	if artifactLastModified.Before(time.Unix(sec, nsec)) {
 		t.logger().Debug("artifact older than image")
 		return true, nil
 	}
@@ -191,32 +212,26 @@ func removeContainerWithLogging(
 
 func (t *Task) runContainer(
 	ctx *context.ExecuteContext,
-	options docker.CreateContainerOptions,
+	opts containerCreateOptions,
 ) error {
-	name := options.Name
-	container, err := ctx.Client.CreateContainer(options)
+	container, err := ctx.Client.ContainerCreate(cont.Background(), opts.Config, opts.HostConfig, opts.NetworkingConfig, opts.Platform, opts.Name)
 	if err != nil {
-		return fmt.Errorf("failed creating container %q: %s", name, err)
+		return fmt.Errorf("failed creating container %q: %s", opts.Name, err)
 	}
 
 	chanSig := t.forwardSignals(ctx.Client, container.ID)
 	defer signal.Stop(chanSig)
 
-	closeWaiter, err := ctx.Client.AttachToContainerNonBlocking(docker.AttachToContainerOptions{
-		Container:    container.ID,
-		OutputStream: t.output(),
-		ErrorStream:  os.Stderr,
-		InputStream:  ioutil.NopCloser(os.Stdin),
-		Stream:       true,
-		Stdin:        t.config.Interactive,
-		RawTerminal:  t.config.Interactive,
-		Stdout:       true,
-		Stderr:       true,
+	closeWaiter, err := ctx.Client.ContainerAttach(cont.Background(), container.ID, docker_types.ContainerAttachOptions{
+		Stream: true,
+		Stdin:  t.config.Interactive,
+		Stdout: true,
+		Stderr: true,
 	})
 	if err != nil {
-		return fmt.Errorf("failed attaching to container %q: %s", name, err)
+		return fmt.Errorf("failed attaching to container %q: %s", opts.Name, err)
 	}
-	defer closeWaiter.Wait() // nolint: errcheck
+	defer closeWaiter.Close() // nolint: errcheck
 
 	if t.config.Interactive {
 		inFd, _ := term.GetFdInfo(os.Stdin)
@@ -231,34 +246,34 @@ func (t *Task) runContainer(
 		}()
 	}
 
-	if err := ctx.Client.StartContainer(container.ID, nil); err != nil {
-		return fmt.Errorf("failed starting container %q: %s", name, err)
+	if err := ctx.Client.ContainerStart(cont.Background(), container.ID, docker_types.ContainerStartOptions{}); err != nil {
+		return fmt.Errorf("failed starting container %q: %s", opts.Name, err)
 	}
 
 	initWindow(chanSig)
 	return t.wait(ctx.Client, container.ID)
 }
 
-func (t *Task) output() io.Writer {
+/*func (t *Task) output() io.Writer {
 	if t.outStream == nil {
 		return os.Stdout
 	}
 	return io.MultiWriter(t.outStream, os.Stdout)
-}
+}*/
 
 func (t *Task) createOptions(
 	ctx *context.ExecuteContext,
 	name string,
 	imageName string,
-) docker.CreateContainerOptions {
+) containerCreateOptions {
 	t.logger().Debugf("Image name %q", imageName)
 
 	interactive := t.config.Interactive
 	portBinds, exposedPorts := asPortBindings(t.config.Ports)
 	// TODO: only set Tty if running in a tty
-	opts := docker.CreateContainerOptions{
+	opts := containerCreateOptions{
 		Name: name,
-		Config: &docker.Config{
+		Config: &docker_container.Config{
 			Cmd:          t.config.Command.Value(),
 			Image:        imageName,
 			User:         t.config.User,
@@ -274,12 +289,12 @@ func (t *Task) createOptions(
 			WorkingDir:   t.config.WorkingDir,
 			ExposedPorts: exposedPorts,
 		},
-		HostConfig: &docker.HostConfig{
+		HostConfig: &docker_container.HostConfig{
 			Binds:        getMountsForHostConfig(ctx, t.config.Mounts),
 			Privileged:   t.config.Privileged,
 			NetworkMode:  t.config.NetMode,
 			PortBindings: portBinds,
-			Devices:      getDevices(t.config.Devices),
+			//Devices:      getDevices(t.config.Devices),
 		},
 	}
 	if t.config.ProvideDocker {
@@ -299,7 +314,7 @@ func getMountsForHostConfig(ctx *context.ExecuteContext, mounts []string) []stri
 	return binds
 }
 
-func getDevices(devices []config.Device) []docker.Device {
+/*func getDevices(devices []config.Device) []docker.Device {
 	var dockerdevices []docker.Device
 	for _, dev := range devices {
 		if dev.Container == "" {
@@ -316,22 +331,22 @@ func getDevices(devices []config.Device) []docker.Device {
 			})
 	}
 	return dockerdevices
-}
+}*/
 
-func asPortBindings(ports []string) (map[docker.Port][]docker.PortBinding, map[docker.Port]struct{}) { // nolint: lll
-	binds := make(map[docker.Port][]docker.PortBinding)
-	exposed := make(map[docker.Port]struct{})
+func asPortBindings(ports []string) (nat.PortMap, nat.PortSet) { // nolint: lll
+	binds := nat.PortMap{}
+	exposed := nat.PortSet{}
 	for _, port := range ports {
 		parts := strings.SplitN(port, ":", 2)
 		proto, cport := nat.SplitProtoPort(parts[1])
 		cport = cport + "/" + proto
-		binds[docker.Port(cport)] = []docker.PortBinding{{HostPort: parts[0]}}
-		exposed[docker.Port(cport)] = struct{}{}
+		binds[nat.Port(cport)] = []nat.PortBinding{{HostPort: parts[0]}}
+		exposed[nat.Port(cport)] = struct{}{}
 	}
 	return binds, exposed
 }
 
-func provideDocker(opts docker.CreateContainerOptions) docker.CreateContainerOptions {
+func provideDocker(opts containerCreateOptions) containerCreateOptions {
 	if os.Getenv("DOCKER_HOST") == "" {
 		path := DefaultUnixSocket
 		opts.HostConfig.Binds = append(opts.HostConfig.Binds, path+":"+path)
@@ -345,12 +360,13 @@ func provideDocker(opts docker.CreateContainerOptions) docker.CreateContainerOpt
 }
 
 func (t *Task) wait(client client.DockerClient, containerID string) error {
-	status, err := client.WaitContainer(containerID)
+	statuschan, err := client.ContainerWait(cont.Background(), containerID, docker_container.WaitConditionNotRunning)
+	status := <-statuschan
 	if err != nil {
-		return fmt.Errorf("failed to wait on container exit: %s", err)
+		return fmt.Errorf("failed to wait on container exit: %s", <-err)
 	}
-	if status != 0 {
-		return fmt.Errorf("exited with non-zero status code %d", status)
+	if status.StatusCode != 0 {
+		return fmt.Errorf("exited with non-zero status code %d", status.StatusCode)
 	}
 	return nil
 }
@@ -397,7 +413,7 @@ func handleWinSizeChangeSignal(
 		return
 	}
 
-	err = client.ResizeContainerTTY(containerID, int(winsize.Height), int(winsize.Width))
+	err = client.ContainerResize(cont.Background(), containerID, docker_types.ResizeOptions{Height: uint(winsize.Height), Width: uint(winsize.Width)})
 	if err != nil {
 		logger.WithError(err).
 			Warning("Failed to set container's TTY window size.")
@@ -410,10 +426,7 @@ func handleShutdownSignals(
 	containerID string,
 	sig syscall.Signal,
 ) {
-	if err := client.KillContainer(docker.KillContainerOptions{
-		ID:     containerID,
-		Signal: docker.Signal(sig),
-	}); err != nil {
+	if err := client.ContainerKill(cont.Background(), containerID, sig.String()); err != nil {
 		logger.WithError(err).
 			Warn("Failed to forward signal")
 	}

@@ -7,6 +7,7 @@ import (
 
 	"github.com/dnephin/configtf"
 	pth "github.com/dnephin/configtf/path"
+	docker_container "github.com/docker/docker/api/types/container"
 	shlex "github.com/kballard/go-shellquote"
 	"golang.org/x/term"
 )
@@ -81,7 +82,7 @@ type JobConfig struct {
 	// environment are set on the container.
 	ProvideDocker bool
 	// NetMode The network mode to use. This field supports :doc:`variables`.
-	NetMode string
+	NetMode docker_container.NetworkMode
 	// WorkingDir The directory to set as the active working directory in the
 	// container. This field supports :doc:`variables`.
 	WorkingDir string
@@ -192,7 +193,8 @@ func (c *JobConfig) Resolve(resolver Resolver) (Resource, error) {
 	if err != nil {
 		return &conf, err
 	}
-	conf.NetMode, err = resolver.Resolve(c.NetMode)
+	nm, err := resolver.Resolve((string)(c.NetMode))
+	conf.NetMode = docker_container.NetworkMode(nm)
 	return &conf, err
 }
 

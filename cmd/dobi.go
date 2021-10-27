@@ -8,14 +8,9 @@ import (
 	"github.com/dnephin/dobi/logging"
 	"github.com/dnephin/dobi/tasks"
 	"github.com/dnephin/dobi/tasks/client"
-	docker "github.com/fsouza/go-dockerclient"
+	docker "github.com/docker/docker/client"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
-)
-
-const (
-	// DefaultDockerAPIVersion is the default version of the docker API to use
-	DefaultDockerAPIVersion = "1.25"
 )
 
 var (
@@ -114,15 +109,13 @@ func initLogging(verbose, quiet bool) {
 }
 
 func buildClient() (client.DockerClient, error) {
-	apiVersion := os.Getenv("DOCKER_API_VERSION")
-	if apiVersion == "" {
-		apiVersion = DefaultDockerAPIVersion
-	}
-	// TODO: args for client
-	client, err := docker.NewVersionedClientFromEnv(apiVersion)
+	client, err := docker.NewClientWithOpts()
+	docker.FromEnv(client)
+
 	if err != nil {
 		return nil, err
 	}
+
 	log.Debug("Docker client created")
 	return client, nil
 }

@@ -105,25 +105,29 @@ func TestImageConfigResolve(t *testing.T) {
 		"{three}": "last",
 	})
 
+	key1 := "{one}"
+	key2 := "ok"
 	image := &ImageConfig{
 		Tags:  []string{"foo", "{one}"},
 		Image: "{three}",
 		Steps: "{two}",
-		Args: map[string]string{
-			"key1": "{one}",
-			"key2": "ok",
+		Args: map[string]*string{
+			"key1": &key1,
+			"key2": &key2,
 		},
 		CacheFrom: []string{"{one}", "two"},
 	}
 	resolved, err := image.Resolve(resolver)
 	assert.NilError(t, err)
+	key1 = "thetag"
+	key2 = "ok"
 	expected := &ImageConfig{
 		Tags:  []string{"foo", "thetag"},
 		Image: "last",
 		Steps: "theother",
-		Args: map[string]string{
-			"key1": "thetag",
-			"key2": "ok",
+		Args: map[string]*string{
+			"key1": &key1,
+			"key2": &key2,
 		},
 		CacheFrom: []string{"thetag", "two"},
 	}

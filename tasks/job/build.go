@@ -3,6 +3,7 @@ package job
 import (
 	"archive/tar"
 	"bytes"
+	cont "context"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -17,8 +18,8 @@ import (
 	"github.com/dnephin/dobi/tasks/context"
 	"github.com/dnephin/dobi/tasks/image"
 	"github.com/docker/cli/cli/command/image/build"
-	docker "github.com/fsouza/go-dockerclient"
-	"github.com/moby/moby/pkg/archive"
+	docker_types "github.com/docker/docker/api/types"
+	"github.com/docker/docker/pkg/archive"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
@@ -54,10 +55,10 @@ func (t *Task) buildImageWithMounts(ctx *context.ExecuteContext, imageName strin
 	}
 	return image.Stream(os.Stdout, func(out io.Writer) error {
 		opts := buildImageOptions(ctx, out)
-		opts.InputStream = buildContext
-		opts.Name = imageName
+		opts.Tags = []string{imageName}
 		opts.Dockerfile = dockerfileName
-		return ctx.Client.BuildImage(opts)
+		_, err := ctx.Client.ImageBuild(cont.Background(), buildContext, opts)
+		return err
 	})
 }
 
@@ -105,18 +106,14 @@ func buildTarContext(
 	return build.AddDockerfileToBuildContext(ioutil.NopCloser(dockerfile), buildCtx)
 }
 
-func buildImageOptions(ctx *context.ExecuteContext, out io.Writer) docker.BuildImageOptions {
-	return docker.BuildImageOptions{
-		RmTmpContainer: true,
-		OutputStream:   out,
-		RawJSONStream:  true,
+func buildImageOptions(ctx *context.ExecuteContext, out io.Writer) docker_types.ImageBuildOptions {
+	return docker_types.ImageBuildOptions{
 		SuppressOutput: ctx.Settings.Quiet,
-		AuthConfigs:    ctx.GetAuthConfigs(),
 	}
 }
 
 func removeImage(logger *log.Entry, client client.DockerClient, imageID string) {
-	if err := client.RemoveImage(imageID); err != nil {
+	if _, err := client.ImageRemove(cont.Background(), imageID, docker_types.ImageRemoveOptions{}); err != nil {
 		logger.Warnf("failed to remove %q: %s", imageID, err)
 	}
 }
@@ -137,12 +134,9 @@ func copyFilesToHost(
 		}
 		logger.Debugf("Copying %s from container directory %s",
 			artifact, artifactPath.containerDir())
-		buf := new(bytes.Buffer)
-		opts := docker.DownloadFromContainerOptions{
-			Path:         artifactPath.containerDir(),
-			OutputStream: buf,
-		}
-		if err := ctx.Client.DownloadFromContainer(containerID, opts); err != nil {
+
+		buf, _, err := ctx.Client.CopyFromContainer(cont.Background(), containerID, artifactPath.containerDir())
+		if err != nil {
 			return err
 		}
 		if err := unpack(buf, artifactPath); err != nil {

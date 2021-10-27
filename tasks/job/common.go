@@ -1,11 +1,13 @@
 package job
 
 import (
+	cont "context"
 	"fmt"
 
 	"github.com/dnephin/dobi/tasks/client"
 	"github.com/dnephin/dobi/tasks/context"
-	docker "github.com/fsouza/go-dockerclient"
+	docker_types "github.com/docker/docker/api/types"
+	docker "github.com/docker/docker/client"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -22,17 +24,17 @@ func removeContainer(
 	containerID string,
 ) (bool, error) {
 	logger.Debug("Removing container")
-	err := client.RemoveContainer(docker.RemoveContainerOptions{
-		ID:            containerID,
+	err := client.ContainerRemove(cont.Background(), containerID, docker_types.ContainerRemoveOptions{
 		RemoveVolumes: true,
 		Force:         true,
 	})
-	switch err.(type) {
-	case *docker.NoSuchContainer:
+	if docker.IsErrNotFound(err) {
 		return false, nil
-	case nil:
+	}
+	if err == nil {
 		return true, nil
 	}
+
 	logger.WithFields(log.Fields{"container": containerID}).Warnf(
 		"Failed to remove container: %s", err)
 	return false, err

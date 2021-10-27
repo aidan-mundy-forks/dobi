@@ -1,6 +1,7 @@
 package mount
 
 import (
+	cont "context"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -10,7 +11,7 @@ import (
 	"github.com/dnephin/dobi/tasks/context"
 	"github.com/dnephin/dobi/tasks/task"
 	"github.com/dnephin/dobi/tasks/types"
-	docker "github.com/fsouza/go-dockerclient"
+	docker_volume "github.com/docker/docker/api/types/volume"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -86,7 +87,7 @@ func (t *createAction) createBind(ctx *context.ExecuteContext) error {
 }
 
 func (t *createAction) createNamed(ctx *context.ExecuteContext) error {
-	_, err := ctx.Client.CreateVolume(docker.CreateVolumeOptions{
+	_, err := ctx.Client.VolumeCreate(cont.Background(), docker_volume.VolumeCreateBody{
 		Name: t.task.config.Name,
 	})
 	return err
@@ -103,7 +104,7 @@ func remove(task *Task, ctx *context.ExecuteContext) (bool, error) {
 		return false, nil
 	}
 
-	if err := ctx.Client.RemoveVolume(task.config.Name); err != nil {
+	if err := ctx.Client.VolumeRemove(cont.Background(), task.config.Name, false); err != nil {
 		task.logger().Warnf("failed to remove %q: %s", task.config.Name, err)
 	}
 

@@ -1,18 +1,22 @@
 package image
 
 import (
+	cont "context"
 	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/dnephin/dobi/config"
 	"github.com/dnephin/dobi/tasks/context"
 	"github.com/dnephin/dobi/utils/fs"
 	"github.com/docker/cli/cli/command/image/build"
-	docker "github.com/fsouza/go-dockerclient"
-	"github.com/moby/moby/pkg/archive"
+	docker_types "github.com/docker/docker/api/types"
+	docker_time "github.com/docker/docker/api/types/time"
+	docker "github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/archive"
 	"github.com/pkg/errors"
 )
 
@@ -56,12 +60,11 @@ func RunBuild(ctx *context.ExecuteContext, t *Task, hasModifiedDeps bool) (bool,
 // nolint: gocyclo
 func buildIsStale(ctx *context.ExecuteContext, t *Task) (bool, error) {
 	image, err := GetImage(ctx, t.config)
-	switch err {
-	case docker.ErrNoSuchImage:
+	if docker.IsErrNotFound(err) {
 		t.logger().Debug("Image does not exist")
 		return true, nil
-	case nil:
-	default:
+	}
+	if err != nil {
 		return true, err
 	}
 
@@ -83,14 +86,22 @@ func buildIsStale(ctx *context.ExecuteContext, t *Task) (bool, error) {
 		Paths:    paths,
 	})
 	if err != nil {
-		t.logger().Warnf("Failed to get last modified time of context.")
+		t.logger().Warnf("Failed to get last modified time of cont.")
 		return true, err
 	}
 
 	record, err := getImageRecord(recordPath(ctx, t.config))
 	if err != nil {
 		t.logger().Warnf("Failed to get image record: %s", err)
-		if image.Created.Before(mtime) {
+		ts, err := docker_time.GetTimestamp(image.Created, time.Now())
+		if err != nil {
+			return true, err
+		}
+		sec, nsec, err := docker_time.ParseTimestamps(ts, 0)
+		if err != nil {
+			return true, err
+		}
+		if time.Unix(sec, nsec).Before(mtime) {
 			t.logger().Debug("Image older than context")
 			return true, nil
 		}
@@ -113,6 +124,7 @@ func absPath(path string, wd string) string {
 
 func buildImage(ctx *context.ExecuteContext, t *Task) error {
 	var err error
+
 	if t.config.Steps != "" {
 		err = t.buildImageFromSteps(ctx)
 	} else {
@@ -121,6 +133,7 @@ func buildImage(ctx *context.ExecuteContext, t *Task) error {
 	if err != nil {
 		return err
 	}
+
 	image, err := GetImage(ctx, t.config)
 	if err != nil {
 		return err
@@ -133,34 +146,36 @@ func (t *Task) buildImageFromDockerfile(ctx *context.ExecuteContext) error {
 	return Stream(os.Stdout, func(out io.Writer) error {
 		opts := t.commonBuildImageOptions(ctx, out)
 		opts.Dockerfile = t.config.Dockerfile
-		opts.ContextDir = t.config.Context
-		return ctx.Client.BuildImage(opts)
+		file, err := os.Open(ctx.WorkingDir)
+		if err != nil {
+			return err
+		}
+
+		_, err = ctx.Client.ImageBuild(cont.Background(), file, opts)
+		return errors.WithMessage(err, "tesadfjhsdkjst")
+		return err
 	})
 }
 
 func (t *Task) commonBuildImageOptions(
 	ctx *context.ExecuteContext,
 	out io.Writer,
-) docker.BuildImageOptions {
-	return docker.BuildImageOptions{
-		Name:           GetImageName(ctx, t.config),
+) docker_types.ImageBuildOptions {
+	return docker_types.ImageBuildOptions{
+		Tags:           []string{GetImageName(ctx, t.config)},
 		BuildArgs:      buildArgs(t.config.Args),
 		Target:         t.config.Target,
-		Pull:           t.config.PullBaseImageOnBuild,
+		PullParent:     t.config.PullBaseImageOnBuild,
 		NetworkMode:    t.config.NetworkMode,
 		CacheFrom:      t.config.CacheFrom,
-		RmTmpContainer: true,
-		OutputStream:   out,
-		RawJSONStream:  true,
 		SuppressOutput: ctx.Settings.Quiet,
-		AuthConfigs:    ctx.GetAuthConfigs(),
 	}
 }
 
-func buildArgs(args map[string]string) []docker.BuildArg {
-	out := []docker.BuildArg{}
+func buildArgs(args map[string]*string) map[string]*string {
+	out := map[string]*string{}
 	for key, value := range args {
-		out = append(out, docker.BuildArg{Name: key, Value: value})
+		out[key] = value
 	}
 	return out
 }
@@ -172,9 +187,9 @@ func (t *Task) buildImageFromSteps(ctx *context.ExecuteContext) error {
 	}
 	return Stream(os.Stdout, func(out io.Writer) error {
 		opts := t.commonBuildImageOptions(ctx, out)
-		opts.InputStream = buildContext
 		opts.Dockerfile = dockerfile
-		return ctx.Client.BuildImage(opts)
+		_, err := ctx.Client.ImageBuild(cont.Background(), buildContext, opts)
+		return err
 	})
 }
 
