@@ -6,7 +6,7 @@ require (
 	github.com/dnephin/configtf v0.0.0-20161020003418-6b0d1fdf5e68
 	github.com/dnephin/go-os-user v0.0.0-20161029070903-44e2994deb1e
 	github.com/docker/cli v20.10.10+incompatible
-	github.com/docker/docker v20.10.10+incompatible
+	github.com/docker/docker v20.10.24+incompatible
 	github.com/docker/go-connections v0.4.0
 	github.com/fsouza/go-dockerclient v1.7.4
 	github.com/gogs/git-module v1.1.5
